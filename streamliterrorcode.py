@@ -1,0 +1,1209 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+import time
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import io
+import os
+from supabase import create_client, Client
+from dotenv import load_dotenv
+import pytz
+import streamlit.components.v1 as components
+
+# Load environment variables
+load_dotenv()
+
+# Page configuration
+st.set_page_config(
+    page_title="PSX Stock Analyzer Cloud",
+    page_icon="☁️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS with cloud theme (keeping your existing CSS)
+st.markdown("""
+<style>
+    /* Cloud-themed animations */
+    @keyframes cloudFloat {
+        0% { transform: translateY(0px) }
+        50% { transform: translateY(-5px) }
+        100% { transform: translateY(0px) }
+    }
+    
+    @keyframes gradientFlow {
+        0% { background-position: 0% 50% }
+        50% { background-position: 100% 50% }
+        100% { background-position: 0% 50% }
+    }
+    
+    @keyframes fadeInUp {
+        from {
+            opacity: 0;
+            transform: translateY(30px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .cloud-header {
+        font-size: 3rem;
+        font-weight: bold;
+        text-align: center;
+        margin-bottom: 1rem;
+        background: linear-gradient(45deg, #1e90ff, #4169e1, #87ceeb);
+        background-size: 300% 300%;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        animation: 
+            gradientFlow 5s ease 0s 1 forwards,
+            fadeInUp 1s ease-out 0s 1 forwards;
+        animation-fill-mode: both;
+    }
+    
+    .cloud-subheader {
+        font-size: 1.5rem;
+        text-align: center;
+        color: #666;
+        margin-bottom: 2rem;
+        animation: fadeInUp 1.2s ease-out 0s 1 forwards;
+        animation-fill-mode: both;
+    }
+    
+    .cloud-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 1rem;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        margin: 0.5rem 0;
+        transition: all 0.3s ease;
+        animation: fadeInUp 0.6s ease-out 0s 1 forwards, cloudFloat 6s ease-in-out 0s 1 forwards;
+        animation-fill-mode: both;
+    }
+    
+    .cloud-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+        animation-play-state: paused;
+    }
+    
+    .time-bar-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 1rem;
+        border-radius: 0.8rem;
+        margin: 0.5rem;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    
+    .time-bar-card:hover {
+        transform: scale(1.05);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+    
+    .time-bar-card.active {
+        background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+        box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+    }
+    
+    .volume-delta-positive {
+        color: #4CAF50;
+        font-weight: bold;
+        background: rgba(76, 175, 80, 0.1);
+        padding: 0.2rem 0.5rem;
+        border-radius: 0.3rem;
+    }
+    
+    .volume-delta-negative {
+        color: #f44336;
+        font-weight: bold;
+        background: rgba(244, 67, 54, 0.1);
+        padding: 0.2rem 0.5rem;
+        border-radius: 0.3rem;
+    }
+    
+    .data-freshness-indicator {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 8px;
+        animation: pulse 2s infinite;
+    }
+    
+    .data-freshness-indicator.fresh {
+        background-color: #4CAF50;
+    }
+    
+    .data-freshness-indicator.stale {
+        background-color: #FF9800;
+    }
+    
+    .data-freshness-indicator.old {
+        background-color: #f44336;
+    }
+    
+    @keyframes pulse {
+        0% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.1); opacity: 0.7; }
+        100% { transform: scale(1); opacity: 1; }
+    }
+    
+    .interval-badge {
+        display: inline-block;
+        padding: 0.2rem 0.8rem;
+        border-radius: 1rem;
+        font-size: 0.8rem;
+        font-weight: bold;
+        margin: 0 0.2rem;
+        background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+        color: white;
+    }
+    
+    /* Header and Navigation Styles */
+    .header-container {
+        background: linear-gradient(135deg, #d32f2f 0%, #388e3c 100%);
+        padding: 1rem 2rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-radius: 0.8rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 20px rgba(211, 47, 47, 0.3);
+    }
+    
+    .logo-section {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    
+    .logo-icon {
+        font-size: 2rem;
+    }
+    
+    .logo-text {
+        font-size: 1.5rem;
+        font-weight: bold;
+        margin: 0;
+        background: linear-gradient(45deg, #ff6b6b, #4CAF50, #ff9800, #2196F3);
+        background-size: 300% 300%;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        animation: gradientFlow 5s ease infinite;
+    }
+    
+    .nav-menu-btn {
+        background: rgba(255, 255, 255, 0.2);
+        border: 2px solid rgba(255, 255, 255, 0.4);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+        cursor: pointer;
+        font-size: 1.5rem;
+        transition: all 0.3s ease;
+    }
+    
+    .nav-menu-btn:hover {
+        background: rgba(255, 255, 255, 0.3);
+        border-color: rgba(255, 255, 255, 0.6);
+    }
+    
+    .nav-menu-items {
+        background: linear-gradient(135deg, #2c3e50 0%, #1a1a2e 100%);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 0.5rem;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        padding: 0.5rem 0;
+        margin-top: 0.5rem;
+        backdrop-filter: blur(10px);
+    }
+    
+    .nav-menu-item {
+        padding: 0.75rem 1.5rem;
+        color: white;
+        text-decoration: none;
+        display: block;
+        transition: all 0.2s ease;
+        border-left: 3px solid transparent;
+    }
+    
+    .nav-menu-item:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        border-left-color: #4CAF50;
+        padding-left: 1.8rem;
+    }
+    
+    .nav-divider {
+        height: 1px;
+        background-color: rgba(255, 255, 255, 0.1);
+        margin: 0.5rem 0;
+    }
+    
+    /* Footer Styles */
+    .footer-container {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 0.8rem;
+        margin-top: 3rem;
+        text-align: center;
+    }
+    
+    .footer-content {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 2rem;
+        margin-bottom: 2rem;
+    }
+    
+    .footer-section {
+        text-align: left;
+    }
+    
+    .footer-section h4 {
+        color: #e0e0ff;
+        margin-bottom: 1rem;
+        font-weight: bold;
+    }
+    
+    .footer-link {
+        color: rgba(255, 255, 255, 0.85);
+        text-decoration: none;
+        display: block;
+        padding: 0.5rem 0;
+        transition: all 0.2s ease;
+    }
+    
+    .footer-link:hover {
+        color: white;
+        padding-left: 0.5rem;
+    }
+    
+    .footer-divider {
+        height: 1px;
+        background-color: rgba(255, 255, 255, 0.2);
+        margin: 1.5rem 0;
+    }
+    
+    .footer-bottom {
+        text-align: center;
+        font-size: 0.9rem;
+        color: rgba(255, 255, 255, 0.7);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Initialize Supabase client
+@st.cache_resource
+def init_supabase():
+    """Initialize Supabase client"""
+    try:
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+        
+        if not supabase_url or not supabase_key:
+            st.error("Supabase credentials not found. Please set SUPABASE_URL and SUPABASE_KEY in .env file")
+            return None
+        
+        return create_client(supabase_url, supabase_key)
+    except Exception as e:
+        st.error(f"Error initializing Supabase: {str(e)}")
+        return None
+
+# Initialize
+supabase = init_supabase()
+
+# Constants
+TIMEZONE = pytz.timezone('Asia/Karachi')
+INTERVALS = {
+    '5m': 5,
+    '15m': 15,
+    '1h': 60,
+    '4h': 240,
+    '1d': 1440
+}
+
+class DataManager:
+    """Manages data fetching and aggregation from Supabase"""
+    
+    @staticmethod
+    def get_timestamp_column_name():
+        """Try to determine the actual timestamp column name in the database"""
+        try:
+            if supabase is None:
+                return 'scrape_time'
+            
+            # Try to get one record to see the column names
+            response = supabase.table('stock_data')\
+                .select('*')\
+                .limit(1)\
+                .execute()
+            
+            if response.data and len(response.data) > 0:
+                first_record = response.data[0]
+                
+                # Look for potential timestamp column names
+                timestamp_candidates = ['scrape_time', 'timestamp', 'time', 'created_at', 'date_time', 'scraped_at']
+                
+                for candidate in timestamp_candidates:
+                    if candidate in first_record:
+                        return candidate
+                
+                # If no standard name found, look for any column with 'time' in it
+                for key in first_record.keys():
+                    if 'time' in key.lower():
+                        return key
+                
+                # Default to 'scrape_time'
+                return 'scrape_time'
+            
+            return 'scrape_time'
+        except Exception as e:
+            st.error(f"Error detecting timestamp column: {str(e)}")
+            return 'scrape_time'
+    
+    @staticmethod
+    def get_available_timestamps(interval='5m'):
+        """Get available timestamps for the selected interval"""
+        try:
+            if supabase is None:
+                return []
+            
+            # Get the actual timestamp column name
+            timestamp_column = DataManager.get_timestamp_column_name()
+            
+            # Get all unique timestamps
+            response = supabase.table('stock_data')\
+                .select(timestamp_column)\
+                .order(timestamp_column, desc=True)\
+                .execute()
+            
+            if not response.data:
+                return []
+            
+            # Convert to datetime objects
+            timestamps = []
+            for item in response.data:
+                try:
+                    # Try different date formats
+                    time_str = item.get(timestamp_column)
+                    if time_str:
+                        # Clean the string
+                        time_str = str(time_str).replace('Z', '+00:00')
+                        # Parse the datetime
+                        dt = datetime.fromisoformat(time_str)
+                        timestamps.append(dt)
+                except Exception as e:
+                    st.warning(f"Could not parse timestamp: {item.get(timestamp_column)} - {str(e)}")
+                    continue
+            
+            # Remove duplicates and sort
+            timestamps = sorted(set(timestamps), reverse=True)
+            
+            # Filter based on interval
+            if interval == '5m':
+                return timestamps
+            elif interval == '15m':
+                # Get every 15 minutes
+                return [ts for ts in timestamps if ts.minute % 15 == 0]
+            elif interval == '1h':
+                # Get every hour
+                return [ts for ts in timestamps if ts.minute == 0]
+            elif interval == '4h':
+                # Get every 4 hours
+                return [ts for ts in timestamps if ts.hour % 4 == 0 and ts.minute == 0]
+            elif interval == '1d':
+                # Get daily (only one per day)
+                daily_timestamps = []
+                seen_days = set()
+                for ts in timestamps:
+                    day_key = ts.date()
+                    if day_key not in seen_days:
+                        daily_timestamps.append(ts)
+                        seen_days.add(day_key)
+                return daily_timestamps
+            
+            return timestamps
+            
+        except Exception as e:
+            # More detailed error message
+            error_msg = str(e)
+            if isinstance(e, dict):
+                error_msg = e.get('message', str(e))
+            
+            st.error(f"Error fetching timestamps: {error_msg}")
+            
+            # Diagnostic information
+            if "does not exist" in error_msg.lower():
+                st.info("""
+                **Diagnostic Information:**
+                
+                The database column name might be different. Common column names for timestamps are:
+                - `scrape_time`
+                - `timestamp` 
+                - `time`
+                - `created_at`
+                - `date_time`
+                
+                Please check your Supabase table structure and update the column name in the `get_timestamp_column_name()` method.
+                """)
+            
+            return []
+    
+    @staticmethod
+    def fetch_data_for_timestamp(timestamp, interval='5m'):
+        """Fetch and aggregate data for a specific timestamp and interval"""
+        try:
+            if supabase is None:
+                return None
+            
+            # Get the actual timestamp column name
+            timestamp_column = DataManager.get_timestamp_column_name()
+            
+            # Convert to UTC string for query
+            timestamp_utc = timestamp.astimezone(pytz.UTC)
+            start_time = timestamp_utc
+            end_time = timestamp_utc
+            
+            # Adjust time window based on interval
+            if interval == '15m':
+                start_time = timestamp_utc - timedelta(minutes=15)
+            elif interval == '1h':
+                start_time = timestamp_utc - timedelta(minutes=60)
+            elif interval == '4h':
+                start_time = timestamp_utc - timedelta(minutes=240)
+            elif interval == '1d':
+                # Assuming trading day is 6 hours (9:30 AM to 3:30 PM)
+                start_time = timestamp_utc - timedelta(minutes=360)
+            
+            # Query data within the time window
+            response = supabase.table('stock_data')\
+                .select('*')\
+                .gte(timestamp_column, start_time.isoformat())\
+                .lte(timestamp_column, end_time.isoformat())\
+                .execute()
+            
+            if not response.data:
+                return None
+            
+            # Convert to DataFrame
+            df = pd.DataFrame(response.data)
+            
+            # Aggregate if needed (for intervals > 5m)
+            if interval != '5m':
+                df = DataManager.aggregate_data(df, interval, timestamp_utc, timestamp_column)
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"Error fetching data: {str(e)}")
+            return None
+    
+    @staticmethod
+    def aggregate_data(df, interval, timestamp, timestamp_column='scrape_time'):
+        """Aggregate 5-minute data to higher timeframes"""
+        if df.empty:
+            return df
+        
+        aggregated = []
+        
+        # Group by symbol
+        for symbol in df['symbol'].unique():
+            symbol_data = df[df['symbol'] == symbol]
+            
+            if symbol_data.empty:
+                continue
+            
+            # Calculate aggregated values
+            agg_row = {
+                'symbol': symbol,
+                'sector': symbol_data.iloc[0]['sector'] if 'sector' in symbol_data.columns else '',
+                'listed_in': symbol_data.iloc[0]['listed_in'] if 'listed_in' in symbol_data.columns else '',
+                'ldcp': symbol_data.iloc[0]['ldcp'] if len(symbol_data) > 0 else 0,
+                'open': symbol_data.iloc[0]['open'] if len(symbol_data) > 0 else 0,
+                'high': symbol_data['high'].max() if len(symbol_data) > 0 else 0,
+                'low': symbol_data['low'].min() if len(symbol_data) > 0 else 0,
+                'current': symbol_data.iloc[-1]['current'] if len(symbol_data) > 0 else 0,
+                'volume': symbol_data['volume'].sum() if len(symbol_data) > 0 else 0,
+                timestamp_column: timestamp.isoformat()
+            }
+            
+            # Calculate change and change_percent
+            if agg_row['open'] > 0:
+                agg_row['change'] = agg_row['current'] - agg_row['open']
+                agg_row['change_percent'] = (agg_row['change'] / agg_row['open']) * 100
+            else:
+                agg_row['change'] = 0
+                agg_row['change_percent'] = 0
+            
+            aggregated.append(agg_row)
+        
+        return pd.DataFrame(aggregated)
+    
+    @staticmethod
+    def calculate_volume_delta(current_df, interval, timestamp):
+        """Calculate volume delta compared to previous interval"""
+        if current_df is None or current_df.empty:
+            return current_df
+        
+        # Get previous timestamp
+        if interval == '5m':
+            prev_timestamp = timestamp - timedelta(minutes=5)
+        elif interval == '15m':
+            prev_timestamp = timestamp - timedelta(minutes=15)
+        elif interval == '1h':
+            prev_timestamp = timestamp - timedelta(hours=1)
+        elif interval == '4h':
+            prev_timestamp = timestamp - timedelta(hours=4)
+        elif interval == '1d':
+            prev_timestamp = timestamp - timedelta(days=1)
+        else:
+            return current_df
+        
+        # Fetch previous interval data
+        prev_df = DataManager.fetch_data_for_timestamp(prev_timestamp, interval)
+        
+        if prev_df is None or prev_df.empty:
+            # If no previous data, set delta to 0
+            current_df['volume_delta'] = 0
+            current_df['volume_delta_percent'] = 0
+            return current_df
+        
+        # Calculate deltas
+        deltas = []
+        delta_percents = []
+        
+        for _, row in current_df.iterrows():
+            symbol = row['symbol']
+            current_volume = row['volume']
+            
+            # Find previous volume for this symbol
+            prev_row = prev_df[prev_df['symbol'] == symbol]
+            if not prev_row.empty:
+                prev_volume = prev_row.iloc[0]['volume']
+                volume_delta = current_volume - prev_volume
+                if prev_volume > 0:
+                    volume_delta_percent = (volume_delta / prev_volume) * 100
+                else:
+                    volume_delta_percent = 0
+            else:
+                # No previous data for this symbol
+                volume_delta = 0
+                volume_delta_percent = 0
+            
+            deltas.append(volume_delta)
+            delta_percents.append(volume_delta_percent)
+        
+        current_df['volume_delta'] = deltas
+        current_df['volume_delta_percent'] = delta_percents
+        
+        return current_df
+
+def display_time_bar_selector():
+    """Display time interval selector"""
+    st.markdown("### ⏰ Time Interval Selection")
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        if st.button("5m", use_container_width=True, 
+                    type="primary" if st.session_state.get('interval', '5m') == '5m' else "secondary"):
+            st.session_state.interval = '5m'
+            st.rerun()
+    
+    with col2:
+        if st.button("15m", use_container_width=True,
+                    type="primary" if st.session_state.get('interval', '5m') == '15m' else "secondary"):
+            st.session_state.interval = '15m'
+            st.rerun()
+    
+    with col3:
+        if st.button("1h", use_container_width=True,
+                    type="primary" if st.session_state.get('interval', '5m') == '1h' else "secondary"):
+            st.session_state.interval = '1h'
+            st.rerun()
+    
+    with col4:
+        if st.button("4h", use_container_width=True,
+                    type="primary" if st.session_state.get('interval', '5m') == '4h' else "secondary"):
+            st.session_state.interval = '4h'
+            st.rerun()
+    
+    with col5:
+        if st.button("1d", use_container_width=True,
+                    type="primary" if st.session_state.get('interval', '5m') == '1d' else "secondary"):
+            st.session_state.interval = '1d'
+            st.rerun()
+
+def display_timestamp_selector():
+    """Display available timestamps for the selected interval"""
+    interval = st.session_state.get('interval', '5m')
+    timestamps = DataManager.get_available_timestamps(interval)
+    
+    if not timestamps:
+        st.warning(f"No data available for {interval} interval")
+        
+        # Show diagnostic info
+        if supabase:
+            st.info("""
+            **Troubleshooting Tips:**
+            
+            1. Check if your Supabase table has data
+            2. Verify the timestamp column name (check `get_timestamp_column_name()` method)
+            3. Ensure your scraper is running and inserting data
+            4. Check if there are any data type issues in the timestamp column
+            """)
+        
+        return None
+    
+    # Format timestamps for display
+    formatted_timestamps = []
+    for ts in timestamps:
+        local_ts = ts.astimezone(TIMEZONE)
+        if interval == '1d':
+            display = local_ts.strftime("%Y-%m-%d")
+        else:
+            display = local_ts.strftime("%Y-%m-%d %H:%M")
+        formatted_timestamps.append((display, ts))
+    
+    # Create selector
+    selected_display = st.selectbox(
+        f"Select {interval} timestamp",
+        options=[t[0] for t in formatted_timestamps],
+        index=0,
+        key=f"timestamp_selector_{interval}"
+    )
+    
+    # Find corresponding timestamp
+    selected_ts = next(t[1] for t in formatted_timestamps if t[0] == selected_display)
+    
+    return selected_ts
+
+def display_stock_metrics_with_delta(df):
+    """Display key stock market metrics with volume deltas"""
+    if df is None or df.empty:
+        return
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        st.markdown('<div class="cloud-card">', unsafe_allow_html=True)
+        st.metric("Total Stocks", len(df))
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown('<div class="cloud-card">', unsafe_allow_html=True)
+        gainers = len(df[df['change_percent'] > 0]) if 'change_percent' in df.columns else 0
+        st.metric("Gaining Stocks", gainers)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown('<div class="cloud-card">', unsafe_allow_html=True)
+        losers = len(df[df['change_percent'] < 0]) if 'change_percent' in df.columns else 0
+        st.metric("Losing Stocks", losers)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown('<div class="cloud-card">', unsafe_allow_html=True)
+        total_volume = f"{df['volume'].sum():,}" if 'volume' in df.columns else "N/A"
+        st.metric("Total Volume", total_volume)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col5:
+        st.markdown('<div class="cloud-card">', unsafe_allow_html=True)
+        if 'volume_delta' in df.columns:
+            total_delta = df['volume_delta'].sum()
+            delta_sign = "+" if total_delta >= 0 else ""
+            st.metric("Volume Δ", f"{delta_sign}{total_delta:,.0f}")
+        else:
+            st.metric("Volume Δ", "N/A")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+def format_volume_delta(row):
+    """Format volume delta for display"""
+    if 'volume_delta' not in row:
+        return ""
+    
+    delta = row['volume_delta']
+    delta_percent = row.get('volume_delta_percent', 0)
+    
+    if delta > 0:
+        return f'<span class="volume-delta-positive">↑ {delta:+,.0f} ({delta_percent:+.1f}%)</span>'
+    elif delta < 0:
+        return f'<span class="volume-delta-negative">↓ {delta:+,.0f} ({delta_percent:+.1f}%)</span>'
+    else:
+        return f'<span>0 (0%)</span>'
+
+def display_header_with_nav():
+    """Display professional header with navigation menu"""
+    # Initialize menu state
+    if 'menu_open' not in st.session_state:
+        st.session_state.menu_open = False
+    
+    col1, col2 = st.columns([0.9, 0.1])
+    
+    with col1:
+        st.markdown("""
+        <div class="header-container">
+            <div class="logo-section">
+                <span class="logo-icon">☁️</span>
+                <h1 class="logo-text">PSX Cloud Stock Analyzer</h1>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        # Menu button using Unicode characters
+        if st.button("⋮", key="menu_btn", help="More options"):
+            st.session_state.menu_open = not st.session_state.menu_open
+    
+    # Display menu when open
+    if st.session_state.menu_open:
+        menu_html = """
+        <div class="nav-menu-items">
+            <a href="?" class="nav-menu-item">🏠 Home</a>
+            <div class="nav-divider"></div>
+            <a href="https://www.kaggle.com/wasiqaliyasir" target="_blank" class="nav-menu-item">ℹ️ About Us</a>
+            <div class="nav-divider"></div>
+            <a href="https://www.psx.com" target="_blank" class="nav-menu-item">📞 Support</a>
+            <div class="nav-divider"></div>
+            <a href="mailto:wasiqtaha@gmail.com" class="nav-menu-item">✉️ Contact Us</a>
+        </div>
+        """
+        st.markdown(menu_html, unsafe_allow_html=True)
+
+def display_footer():
+    """Display professional footer with navigation and information"""
+    footer_html = """
+    <div class="footer-container">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h4>Home Page</h4>
+                <a href="?" class="footer-link">Home</a>
+                <a href="https://www.kaggle.com/wasiqaliyasir" target="_blank" class="footer-link">About Us</a>
+                <a href="https://www.psx.com" target="_blank" class="footer-link">Support</a>
+                <a href="mailto:wasiqtaha@gmail.com" class="footer-link">Contact Us</a>
+            </div>
+            <div class="footer-section">
+                <h4>📊 Features</h4>
+                <p style="margin: 0; font-size: 0.95rem; color: rgba(255, 255, 255, 0.85);">View the data according to the time</p>
+                <p style="margin: 0; font-size: 0.95rem; color: rgba(255, 255, 255, 0.85);">Filter the stock market data</p>
+                <p style="margin: 0; font-size: 0.95rem; color: rgba(255, 255, 255, 0.85);">Real-time market analysis</p>
+                 <p style="margin: 0; font-size: 0.95rem; color: rgba(255, 255, 255, 0.85);">Comming soon features ...</p>
+                 <p style="margin: 0; font-size: 0.95rem; color: rgba(255, 255, 255, 0.85);">ALL candleistick chart in one click.</p>
+                  <p style="margin: 0; font-size: 0.95rem; color: rgba(255, 255, 255, 0.85);">With MACD, RSI indicators</p>
+                   <p style="margin: 0; font-size: 0.95rem; color: rgba(255, 255, 255, 0.85);">Ai Features, Prediction results</p>
+            </div>
+            <div class="footer-section">
+                <h4>☁️ About</h4>
+                <p style="margin: 0; font-size: 0.95rem; color: rgba(255, 255, 255, 0.85);">PSX Cloud Stock Analyzer is a professional-grade market analysis tool. Created by PSX insights.</p>
+            </div>
+        </div>
+        <div class="footer-divider"></div>
+        <div class="footer-bottom">
+            <p style="margin: 0;">© 2025 PSX Cloud Stock Analyzer. All rights reserved.</p>
+            <p style="margin: 0.5rem 0 0 0;">Powered by Streamlit</p>
+        </div>
+    </div>
+    """
+    st.markdown(footer_html, unsafe_allow_html=True)
+
+def main():
+    # Display professional header with navigation
+    display_header_with_nav()
+    
+    # Cloud-themed subheader
+    st.markdown("""
+    <div class="cloud-subheader">
+        Real-time market data with PSX Data backend | Auto-updated every 5 minutes
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Initialize session state
+    if 'interval' not in st.session_state:
+        st.session_state.interval = '5m'
+    if 'selected_timestamp' not in st.session_state:
+        st.session_state.selected_timestamp = None
+    if 'data_fetched' not in st.session_state:
+        st.session_state.data_fetched = False
+    if 'menu_open' not in st.session_state:
+        st.session_state.menu_open = False
+    
+    # Sidebar with enhanced diagnostics
+    with st.sidebar:
+        st.markdown('<div class="cloud-card">', unsafe_allow_html=True)
+        st.title("⚡ Cloud Control Panel")
+        st.markdown("---")
+        
+        # Connection status
+        if supabase:
+            st.success("✅ Connected to PSX data")
+            
+            # Add diagnostic button
+            if st.button("🔍 Check Database Schema", use_container_width=True):
+                with st.spinner("Checking database structure..."):
+                    try:
+                        # Get column names from the database
+                        response = supabase.table('stock_data')\
+                            .select('*')\
+                            .limit(1)\
+                            .execute()
+                        
+                        if response.data and len(response.data) > 0:
+                            st.info("**Database Columns Found:**")
+                            cols = list(response.data[0].keys())
+                            for col in cols:
+                                st.write(f"- `{col}`")
+                            
+                            # Try to detect timestamp column
+                            timestamp_col = DataManager.get_timestamp_column_name()
+                            st.success(f"**Detected Timestamp Column:** `{timestamp_col}`")
+                        else:
+                            st.warning("No data found in the table.")
+                    except Exception as e:
+                        st.error(f"Error checking schema: {str(e)}")
+        else:
+            st.error("❌ Not connected to Supabase")
+            st.info("Please set up Supabase credentials in .env file")
+        
+        # Data freshness indicator
+        st.markdown("### 📊 Data Status")
+        if st.session_state.data_fetched and st.session_state.selected_timestamp:
+            now = datetime.now(pytz.UTC)
+            data_age = (now - st.session_state.selected_timestamp).total_seconds() / 60
+            
+            if data_age < 10:
+                freshness = "fresh"
+                message = f"🟢 Data from {st.session_state.selected_timestamp.astimezone(TIMEZONE).strftime('%H:%M')}"
+            elif data_age < 30:
+                freshness = "stale"
+                message = f"🟡 Data from {st.session_state.selected_timestamp.astimezone(TIMEZONE).strftime('%H:%M')}"
+            else:
+                freshness = "old"
+                message = f"🔴 Data from {st.session_state.selected_timestamp.astimezone(TIMEZONE).strftime('%H:%M')}"
+            
+            st.markdown(f'<span class="data-freshness-indicator {freshness}"></span>{message}', unsafe_allow_html=True)
+        
+        # Fetch button
+        st.markdown("---")
+        st.subheader("🔄 Data Operations")
+        
+        if st.button("📥 Fetch Latest Data", use_container_width=True, type="primary"):
+            with st.spinner("Fetching latest data from Supabase..."):
+                # Get latest timestamp
+                timestamps = DataManager.get_available_timestamps(st.session_state.interval)
+                if timestamps:
+                    st.session_state.selected_timestamp = timestamps[0]
+                    st.session_state.data_fetched = True
+                    st.rerun()
+                else:
+                    st.error("No data available in Supabase")
+        
+        # Manual refresh
+        if st.button("🔄 Refresh Current View", use_container_width=True):
+            st.rerun()
+        
+        # Data info
+        st.markdown("---")
+        st.subheader("ℹ️ About")
+        st.markdown("""
+        **Cloud Features:**
+        - Auto-scraping every 5 minutes
+        - Provide real time data
+        - Time-based aggregation
+        - Volume delta calculations
+        - Real-time updates
+        """)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Main content
+    if not supabase:
+        st.error("""
+        ## ⚠️ Setup Required
+        
+        Please set up Supabase:
+        1. Create a Supabase project
+        2. Create a table with this schema:
+        ```sql
+        CREATE TABLE stock_data (
+            id BIGSERIAL PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            sector TEXT,
+            listed_in TEXT,
+            ldcp FLOAT,
+            open FLOAT,
+            high FLOAT,
+            low FLOAT,
+            current FLOAT,
+            change FLOAT,
+            change_percent FLOAT,
+            volume BIGINT,
+            timestamp TIMESTAMP WITH TIME ZONE NOT NULL,  -- Note: Changed from scrape_time to timestamp
+            dataset_name TEXT,
+            UNIQUE(symbol, timestamp)
+        );
+        ```
+        3. Add indexes:
+        ```sql
+        CREATE INDEX idx_timestamp ON stock_data(timestamp);
+        CREATE INDEX idx_symbol_timestamp ON stock_data(symbol, timestamp);
+        ```
+        4. Add credentials to `.env` file
+        
+        **Note:** If your timestamp column has a different name, please update the `get_timestamp_column_name()` method in the code.
+        """)
+        return
+    
+    # Time interval selection
+    display_time_bar_selector()
+    
+    # Timestamp selection
+    selected_ts = display_timestamp_selector()
+    
+    if selected_ts:
+        st.session_state.selected_timestamp = selected_ts
+        
+        # Fetch and display data
+        with st.spinner(f"Loading {st.session_state.interval} data for {selected_ts.astimezone(TIMEZONE).strftime('%H:%M')}..."):
+            # Fetch data
+            df = DataManager.fetch_data_for_timestamp(selected_ts, st.session_state.interval)
+            
+            if df is not None and not df.empty:
+                # Calculate volume deltas
+                df = DataManager.calculate_volume_delta(df, st.session_state.interval, selected_ts)
+                
+                # Store in session state
+                st.session_state.current_data = df
+                st.session_state.data_fetched = True
+                
+                # Display metrics
+                display_stock_metrics_with_delta(df)
+                
+                # Data filters
+                st.markdown("---")
+                st.subheader("🔍 Filter & Analyze")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    filter_by = st.selectbox("Filter by", ["All", "Gainers", "Losers", "High Volume", "Low Volume"])
+                
+                with col2:
+                    sort_by = st.selectbox("Sort by", [
+                        "Symbol (A-Z)", "Symbol (Z-A)",
+                        "Change % (High-Low)", "Change % (Low-High)",
+                        "Volume (High-Low)", "Volume (Low-High)"
+                    ])
+                
+                with col3:
+                    if st.button("Apply Filters", use_container_width=True):
+                        pass  # Filters applied in display
+                
+                # Apply filters
+                filtered_df = df.copy()
+                
+                if filter_by == "Gainers":
+                    filtered_df = filtered_df[filtered_df['change_percent'] > 0]
+                elif filter_by == "Losers":
+                    filtered_df = filtered_df[filtered_df['change_percent'] < 0]
+                elif filter_by == "High Volume":
+                    filtered_df = filtered_df[filtered_df['volume'] > filtered_df['volume'].median()]
+                elif filter_by == "Low Volume":
+                    filtered_df = filtered_df[filtered_df['volume'] <= filtered_df['volume'].median()]
+                
+                # Apply sorting
+                if sort_by == "Symbol (A-Z)":
+                    filtered_df = filtered_df.sort_values('symbol')
+                elif sort_by == "Symbol (Z-A)":
+                    filtered_df = filtered_df.sort_values('symbol', ascending=False)
+                elif sort_by == "Change % (High-Low)":
+                    filtered_df = filtered_df.sort_values('change_percent', ascending=False)
+                elif sort_by == "Change % (Low-High)":
+                    filtered_df = filtered_df.sort_values('change_percent')
+                elif sort_by == "Volume (High-Low)":
+                    filtered_df = filtered_df.sort_values('volume', ascending=False)
+                elif sort_by == "Volume (Low-High)":
+                    filtered_df = filtered_df.sort_values('volume')
+                
+                # Display data
+                st.markdown(f"### 📋 Stock Data ({len(filtered_df)} stocks)")
+                
+                if not filtered_df.empty:
+                    # Format the DataFrame for display
+                    display_df = filtered_df.copy()
+                    
+                    # Format numeric columns
+                    numeric_cols = ['ldcp', 'open', 'high', 'low', 'current', 'change', 'change_percent', 'volume']
+                    for col in numeric_cols:
+                        if col in display_df.columns:
+                            if col == 'volume':
+                                display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}")
+                            else:
+                                display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}")
+                    
+                    # Add volume delta column
+                    if 'volume_delta' in display_df.columns and 'volume_delta_percent' in display_df.columns:
+                        display_df['Volume Δ'] = display_df.apply(format_volume_delta, axis=1)
+                    
+                    # Display table
+                    st.dataframe(
+                        display_df,
+                        use_container_width=True,
+                        height=600,
+                        column_config={
+                            "Volume Δ": st.column_config.Column(
+                                width="medium",
+                                help="Volume change vs previous interval"
+                            )
+                        }
+                    )
+                    
+                    # Download button
+                    csv = filtered_df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download Filtered Data",
+                        data=csv,
+                        file_name=f"psx_{st.session_state.interval}_{selected_ts.strftime('%Y%m%d_%H%M')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                    
+                    # Visualizations
+                    st.markdown("---")
+                    st.subheader("📈 Data Visualizations")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Top 10 by volume
+                        if 'volume' in filtered_df.columns:
+                            top_volume = filtered_df.nlargest(10, 'volume')[['symbol', 'volume']]
+                            fig1 = px.bar(
+                                top_volume,
+                                x='symbol',
+                                y='volume',
+                                title='📊 Top 10 Stocks by Volume',
+                                color='volume',
+                                color_continuous_scale='Viridis'
+                            )
+                            st.plotly_chart(fig1, use_container_width=True)
+                    
+                    with col2:
+                        # Performance scatter
+                        if all(col in filtered_df.columns for col in ['change_percent', 'volume', 'symbol']):
+                            fig2 = px.scatter(
+                                filtered_df,
+                                x='volume',
+                                y='change_percent',
+                                size='current',
+                                color='change_percent',
+                                hover_name='symbol',
+                                title='📈 Performance: Change % vs Volume',
+                                color_continuous_scale='RdYlGn'
+                            )
+                            fig2.update_layout(xaxis_type="log")
+                            st.plotly_chart(fig2, use_container_width=True)
+                    
+                    # Volume delta visualization
+                    if 'volume_delta' in filtered_df.columns:
+                        st.markdown("### 📊 Volume Deltas")
+                        
+                        # Get top positive and negative deltas
+                        top_positives = filtered_df.nlargest(5, 'volume_delta')[['symbol', 'volume_delta', 'volume_delta_percent']]
+                        top_negatives = filtered_df.nsmallest(5, 'volume_delta')[['symbol', 'volume_delta', 'volume_delta_percent']]
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("#### 📈 Largest Volume Increases")
+                            for _, row in top_positives.iterrows():
+                                st.markdown(f"""
+                                <div class="cloud-card">
+                                    <strong>{row['symbol']}</strong><br>
+                                    Δ Volume: <span class="volume-delta-positive">+{row['volume_delta']:,.0f}</span><br>
+                                    Δ %: {row['volume_delta_percent']:.1f}%
+                                </div>
+                                """, unsafe_allow_html=True)
+                        
+                        with col2:
+                            st.markdown("#### 📉 Largest Volume Decreases")
+                            for _, row in top_negatives.iterrows():
+                                st.markdown(f"""
+                                <div class="cloud-card">
+                                    <strong>{row['symbol']}</strong><br>
+                                    Δ Volume: <span class="volume-delta-negative">{row['volume_delta']:,.0f}</span><br>
+                                    Δ %: {row['volume_delta_percent']:.1f}%
+                                </div>
+                                """, unsafe_allow_html=True)
+                
+                else:
+                    st.warning("No stocks match the filter criteria")
+            
+            else:
+                st.error("No data available for the selected timestamp")
+    else:
+        # Welcome screen rendered as full HTML
+        html = """
+        <style>
+        /* Minimal subset of app styles required for the welcome card + animations */
+        @keyframes cloudFloat {0%{transform:translateY(0)}50%{transform:translateY(-6px)}100%{transform:translateY(0)}}
+        @keyframes gradientFlow {0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+        @keyframes fadeInUp {from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+        .cloud-card{background:#fff;padding:20px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.08);max-width:1000px;margin:10px auto;font-family:inherit;
+          animation: fadeInUp .6s ease-out 0s 1 forwards, cloudFloat 6s ease-in-out 0s 1 forwards;
+          animation-fill-mode: both;
+        }
+        .cloud-header{font-size:2.25rem;font-weight:700;text-align:center;margin-bottom:8px;background:linear-gradient(45deg,#ff6b6b,#4CAF50,#ff9800,#2196F3);background-size:300% 300%;-webkit-background-clip:text;-webkit-text-fill-color:transparent;
+          animation: gradientFlow 5s ease infinite, fadeInUp 1s ease-out 0s 1 forwards;
+          animation-fill-mode: both;
+        }
+        .cloud-subheader{font-size:1.1rem;color:#555;text-align:center;margin-bottom:12px;opacity:.95; animation:fadeInUp 1.1s ease-out 0s 1 forwards; animation-fill-mode: both;}
+        .cloud-card h4{margin-top:14px}
+        .cloud-card ul{margin-left:1.1rem}
+        .cloud-card ol{margin-left:1.1rem}
+        .alert{margin-top:14px;padding:10px;border-radius:8px;background:linear-gradient(90deg,#e8f4ff,#f0f9ff);border:1px solid #d6ecff;color:#083b66}
+        @media (max-width:600px){.cloud-header{font-size:1.6rem}}
+        </style>
+        <div class="cloud-card">
+          <div class="cloud-header">👋 Welcome to PSX Cloud Stock Analyzer!</div>
+          <div class="cloud-subheader">This cloud-based application provides real-time PSX stock market analysis with:</div>
+          <div>
+            <h4>☁️ Cloud Features:</h4>
+            <ul>
+              <li><strong>Auto-scraping</strong>: Data updates every 5 minutes</li>
+              <li><strong>Supabase Storage</strong>: All data stored in cloud database</li>
+              <li><strong>Time-based Analysis</strong>: View 5m, 15m, 1h, 4h, 1D intervals</li>
+              <li><strong>Volume Deltas</strong>: See volume changes between intervals</li>
+              <li><strong>Real-time Updates</strong>: Always current data</li>
+            </ul>
+            <h4>🚀 Getting Started:</h4>
+            <ol>
+              <li>Select a time interval (5m, 15m, 1h, 4h, 1d)</li>
+              <li>Choose a timestamp from the dropdown</li>
+              <li>Apply filters and analyze the data</li>
+              <li>Download filtered results</li>
+            </ol>
+            <div class="alert"><strong>Note:</strong> The scraper runs automatically every 5 minutes in the cloud. No manual scraping needed!</div>
+          </div>
+        </div>
+        """
+        components.html(html, height=420, scrolling=True)
+    
+    # Display footer at the bottom
+    st.markdown("---")
+    display_footer()
+
+if __name__ == "__main__":
+    main()
